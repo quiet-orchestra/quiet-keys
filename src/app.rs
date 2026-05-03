@@ -1,5 +1,7 @@
-use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, Vec2, epaint::CornerRadiusF32, vec2};
+use std::fs;
 
+use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, Vec2, epaint::CornerRadiusF32, vec2};
+use kle_serial::{self, Keyboard};
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -44,13 +46,8 @@ impl eframe::App for QuietKeysApp {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
-    // fn logic(&mut self, ctx: &Context, frame: &mut Frame){
-    //     let (x, y ) = ctx
-    //     self.window_size = vec2(x, y)
-    // }
-
     /// Called each time the UI needs repainting, which may be many times per second.
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
@@ -74,33 +71,22 @@ impl eframe::App for QuietKeysApp {
                 
             });
 
-            ui.separator();
+        });
 
-            ui.heading("eframe template");
-
-            ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
+        egui::Panel::bottom("bottom_panel").show_inside(ui, |ui|{
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                powered_by_egui_and_eframe(ui);
+                egui::warn_if_debug_build(ui);
             });
-
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
-            }
-
-            ui.separator();
-
         });
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
 
             draw_keyboard(ui);
 
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                powered_by_egui_and_eframe(ui);
-                egui::warn_if_debug_build(ui);
-            });
         });
+
+
     }
 }
 
@@ -124,27 +110,46 @@ fn draw_keyboard(ui: &mut egui::Ui){
 
     if window.width() > 120.0 && window.height() > 120.0 {
         let origin = window.left_top();
-        let standard_width = Pos2::new(window.width() / 16.0, 0.).to_vec2();
-        let standard_height = Pos2::new(0., window.height() / 16.0).to_vec2();
 
-        for row in 0..6 {
-            for col in 0..16 {
-                let (
-                    rect,
-                    corner_radius, 
-                    stroke, 
-                    stroke_kind
-                ) = (
-                    Rect::from_min_size(
-                        origin + standard_width * col as f32  + standard_height * row as f32, 
-                        Vec2::new(standard_width.x * 0.9, standard_height.y * 0.9)
-                    ),
-                    0.5,
-                    Stroke::new(2., Color32::WHITE.blend(Color32::GRAY)),
-                    StrokeKind::Middle,
-                );
-                painter.rect_stroke(rect, corner_radius, stroke, stroke_kind);
+        let kle_json = match fs::read_to_string("src/ansi_104.json") {
+            Ok(text) => text,
+            Err(_) => {
+                ui.label("Couldn't find json file");
+                return;
             }
+        };
+
+
+        let keyboard: Keyboard = match serde_json::from_str(&kle_json) {
+            Ok(parsed_text) => parsed_text,
+            Err(_) => {
+                ui.label("Failed to parse json text");
+                return;
+            },
+        };
+
+        let keyboard_rect = get_rect_from_keyboard(keyboard.clone());
+        let unit_width = Pos2::new(window.width() / keyboard_rect.width(), 0.).to_vec2();
+        let unit_height = Pos2::new(0., window.height() / keyboard_rect.height()).to_vec2();
+
+        for key in keyboard.keys{
+
+            let (
+                rect,
+                corner_radius, 
+                stroke, 
+                stroke_kind
+            ) = (
+                Rect::from_min_size(
+                    origin + unit_width * key.x as f32  + unit_height * key.y as f32, 
+                    Vec2::new(unit_width.x * 0.95 * key.width as f32, unit_height.y * 0.95 * key.height as f32)
+                ),
+                0.5,
+                Stroke::new(2., Color32::WHITE.blend(Color32::GRAY)),
+                StrokeKind::Middle,
+            );
+            painter.rect_stroke(rect, corner_radius, stroke, stroke_kind);
+    
         }
         
     }
@@ -152,4 +157,21 @@ fn draw_keyboard(ui: &mut egui::Ui){
         ui.label("Window too small");
     }
     
+}
+
+fn get_rect_from_keyboard(keyboard: Keyboard) -> Rect{
+    let (mut x, mut y) = (0.,0.);
+    for key in keyboard.keys {
+        let key_right = (key.x + key.width) as f32;
+        let key_bottom = (key.y + key.height) as f32;
+
+        if key_right > x {
+            x = key_right;
+        }
+        if key_bottom > y {
+            y = key_bottom;
+        }
+    }
+
+    return Rect { min: Pos2::ZERO, max: Pos2 { x, y } };
 }
